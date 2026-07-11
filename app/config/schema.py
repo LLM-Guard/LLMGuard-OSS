@@ -29,6 +29,10 @@ class DetectionStackConfig:
     qwen3_1_7b: bool = True
     """Tier 3: Qwen3 1.7B via Ollama. ~163ms. 1.8GB VRAM. Default - fits 16GB laptops."""
 
+    legacy_cpu: bool = False
+    """Tier 3: Llama 3.2 1B via Ollama. CPU-only fallback, ~2GB RAM. Used by the
+    installer's 'legacy-cpu' preset for machines with no usable GPU."""
+
 
 
 @dataclass
@@ -48,7 +52,7 @@ class AppConfig:
     detection_stack: DetectionStackConfig = field(default_factory=DetectionStackConfig)
     """Active detectors configuration."""
 
-    llm_preset: Literal["minimal", "balanced", "quality", "maximum"] = "balanced"
+    llm_preset: Literal["minimal", "balanced", "quality", "maximum", "legacy-cpu"] = "balanced"
     """Hardware preset controlling which models are loaded."""
 
     fail_mode: Literal["open", "closed"] = "closed"

@@ -34,11 +34,20 @@ class TestDetectionStackConfig:
         assert stack.openai_privacy_filter is False
         assert stack.qwen3_1_7b is True
         assert stack.gemma4_e2b is False
+        assert stack.legacy_cpu is False
 
     def test_custom_values(self):
         stack = DetectionStackConfig(regex=False, gemma4_e2b=True)
         assert stack.regex is False
         assert stack.gemma4_e2b is True
+
+    def test_legacy_cpu_flag(self):
+        stack = DetectionStackConfig(
+            qwen3_1_7b=False, gemma4_e2b=False, legacy_cpu=True
+        )
+        assert stack.legacy_cpu is True
+        assert stack.qwen3_1_7b is False
+        assert stack.gemma4_e2b is False
 
 
 class TestAppConfig:
@@ -88,6 +97,23 @@ class TestAppConfig:
         assert config.detection_stack.gliner_pii is True
         assert config.detection_stack.qwen3_1_7b is False
         # Unspecified fields get defaults
+        assert config.detection_stack.gemma4_e2b is False
+
+    def test_from_dict_with_legacy_cpu_preset(self):
+        """legacy-cpu preset round-trips through llm_preset and detection_stack.legacy_cpu."""
+        data = {
+            "llm_preset": "legacy-cpu",
+            "detection_stack": {
+                "regex": True,
+                "qwen3_1_7b": False,
+                "gemma4_e2b": False,
+                "legacy_cpu": True,
+            },
+        }
+        config = AppConfig.from_dict(data)
+        assert config.llm_preset == "legacy-cpu"
+        assert config.detection_stack.legacy_cpu is True
+        assert config.detection_stack.qwen3_1_7b is False
         assert config.detection_stack.gemma4_e2b is False
 
 
