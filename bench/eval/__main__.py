@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from bench.eval.corpus import corpus_checksum, load_corpus
@@ -47,6 +48,12 @@ def run_eval(
 
 
 def main() -> int:
+    # Scorecard markdown contains non-ASCII (Δ/✅/⚠️); a Windows cp1252 console
+    # would otherwise raise UnicodeEncodeError when we print it below.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(prog="bench.eval")
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="run the deterministic eval")
