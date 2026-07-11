@@ -22,6 +22,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Iterable
 
@@ -478,6 +479,30 @@ def confirm_plan(extras: set[str], preset: str | None) -> bool:
     return prompt_yes_no("\n  proceed?", default=True)
 
 
+def _wait_for_command(
+    name: str,
+    attempts: int = 5,
+    delay_seconds: float = 1.0,
+    which=shutil.which,
+    sleep=time.sleep,
+) -> str | None:
+    """Poll ``which(name)`` a few times, sleeping between attempts.
+
+    Windows' winget can return before the installed binary's directory is
+    fully registered/visible on ``PATH``, so a single immediate check can
+    give a false negative. This gives the OS a few seconds to catch up
+    before we declare the install a failure. Returns the resolved path (or
+    ``None`` if it never shows up).
+    """
+    for attempt in range(attempts):
+        found = which(name)
+        if found:
+            return found
+        if attempt < attempts - 1:
+            sleep(delay_seconds)
+    return None
+
+
 def _auto_install_ollama() -> bool:
     """Attempt to install Ollama automatically.
 
@@ -505,7 +530,9 @@ def _auto_install_ollama() -> bool:
                 capture_output=True, text=True, timeout=10,
             )
             os.environ["PATH"] = result.stdout.strip()
-            if shutil.which("ollama"):
+            # winget's post-install PATH registration can lag a moment
+            # behind the process returning, so poll briefly before giving up.
+            if _wait_for_command("ollama"):
                 print("  ✓ Ollama installed")
                 return True
         except Exception as exc:
