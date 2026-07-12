@@ -92,14 +92,37 @@ class ConfigStore:
             else:
                 current_dict[key] = value
 
-        # Any explicit write of `browser_interception` through this generic
-        # endpoint counts as the user configuring it -- see
-        # AppConfig.browser_interception_configured (audit C6). Without
-        # this, a future UI toggle that goes through /api/config instead
-        # of /api/browser-proxy/start|stop could get silently re-flipped
-        # by portable's first-run auto-enable on the next launch.
-        if "browser_interception" in data:
+        # Mark `browser_interception` as user-configured only when the
+        # caller's intent is unambiguous -- see
+        # AppConfig.browser_interception_configured (audit C6). The
+        # dashboard's /api/config save always POSTs the *entire* config
+        # object (it round-trips the backend's own to_dict()), so
+        # `browser_interception` is present on literally every save, even
+        # ones that only touch an unrelated field (a detector toggle, a
+        # preset change, a custom pattern edit). Treating mere key
+        # PRESENCE as "the user configured this" meant an unrelated save
+        # racing ahead of portable's first-run auto-enable thread could
+        # permanently freeze `browser_interception_configured=True` with
+        # the stale default `browser_interception=False` baked in --
+        # silently defeating the "auto-enable exactly once" guarantee
+        # without the user ever having chosen to disable interception.
+        #
+        # Instead, only flip `configured` when there's real evidence of
+        # intent:
+        #   1. the incoming value actually differs from what's currently
+        #      stored (the user/API genuinely changed it), or
+        #   2. the payload explicitly sets `browser_interception_configured`
+        #      itself (an internal caller stating its intent directly).
+        # A same-value resend from an unrelated save satisfies neither and
+        # leaves `configured` untouched.
+        if "browser_interception" in data and bool(data["browser_interception"]) != bool(
+            current.browser_interception
+        ):
             current_dict["browser_interception_configured"] = True
+        if "browser_interception_configured" in data:
+            current_dict["browser_interception_configured"] = bool(
+                data["browser_interception_configured"]
+            )
 
         config = AppConfig.from_dict(current_dict)
         cls.save(config)
