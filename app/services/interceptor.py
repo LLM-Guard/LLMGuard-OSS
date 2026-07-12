@@ -515,7 +515,27 @@ def _get_non_macos_interfaces() -> list[str]:
 
 
 def _enable_windows_proxy(port: int) -> bool:
-    """Enable PAC and explicit proxy settings for the current Windows user."""
+    """Enable PAC-only proxy settings for the current Windows user.
+
+    PAC-only: AutoConfigURL + ProxyEnable are the ONLY proxy values we set.
+    The PAC file (generate_pac_file) routes just the domains in
+    INTERCEPTED_DOMAINS through 127.0.0.1:{port}; every other host evaluates
+    to DIRECT in FindProxyForURL. We deliberately do NOT also set
+    ProxyServer/ProxyOverride - that is a blanket system proxy that routes
+    ALL HTTP/HTTPS traffic (Cursor's backend, pip, git, corporate tools,
+    etc.) through mitmproxy, breaking those apps whenever they don't trust
+    our CA or mitmproxy isn't running, and conflicting with any corporate
+    proxy already configured on this machine (see
+    _backup_windows_proxy_settings - if the user already had an
+    AutoConfigURL, e.g. a corporate PAC, we back it up and restore it on
+    disable rather than leave our own PAC in place).
+
+    Tradeoff: some CLIs/daemons never evaluate the Windows PAC (they honor
+    HTTP_PROXY/HTTPS_PROXY env vars or nothing at all). Those tools are
+    intentionally NOT covered here - point them at our explicit local
+    endpoint (http://127.0.0.1:{port}) via the CLI-integration mode instead.
+    We do not add a blanket ProxyServer fallback to "catch" them.
+    """
     import winreg
 
     pac_url = "http://127.0.0.1:9876/proxy.pac"
@@ -525,23 +545,9 @@ def _enable_windows_proxy(port: int) -> bool:
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, "AutoConfigURL", 0, winreg.REG_SZ, pac_url)
         winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
-        winreg.SetValueEx(
-            key,
-            "ProxyServer",
-            0,
-            winreg.REG_SZ,
-            f"http=127.0.0.1:{port};https=127.0.0.1:{port}",
-        )
-        winreg.SetValueEx(
-            key,
-            "ProxyOverride",
-            0,
-            winreg.REG_SZ,
-            "localhost;127.0.0.1;<local>",
-        )
 
     _refresh_windows_proxy_settings()
-    return _windows_proxy_points_to_llmguard(key_path, port)
+    return _windows_proxy_points_to_llmguard(key_path, pac_url)
 
 
 def _backup_windows_proxy_settings(key_path: str) -> None:
@@ -572,7 +578,26 @@ def _backup_windows_proxy_settings(key_path: str) -> None:
 
 
 def _restore_windows_proxy() -> bool:
-    """Restore Windows proxy values saved by _backup_windows_proxy_settings."""
+    """Restore Windows proxy values saved by _backup_windows_proxy_settings.
+
+    This also restores a pre-existing corporate AutoConfigURL: if the user
+    already had their own PAC configured (common on managed/enterprise
+    machines) before enabling LLMGuard, _backup_windows_proxy_settings
+    captured it, and the loop below writes that exact value back rather
+    than just deleting AutoConfigURL. If the user never had one, the
+    backed-up entry is None and we delete the key instead, restoring the
+    "no PAC configured" state.
+
+    FOLLOW-UP (not implemented here): while LLMGuard interception is
+    *enabled*, we overwrite the corporate AutoConfigURL wholesale rather
+    than chaining to it (e.g. having our PAC delegate to the corporate PAC
+    for domains we don't care about). For an enterprise/Pro deployment,
+    chaining would be safer than a full overwrite-and-restore, since any
+    corporate PAC logic (e.g. internal domains needing a specific proxy)
+    is inactive for the duration LLMGuard is on. Restore-on-disable (below)
+    mitigates the risk once the user turns interception off, but does not
+    help while it's running.
+    """
     import winreg
 
     key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
@@ -610,15 +635,20 @@ def _delete_winreg_value(key, name: str) -> None:
         pass
 
 
-def _windows_proxy_points_to_llmguard(key_path: str, port: int) -> bool:
+def _windows_proxy_points_to_llmguard(key_path: str, pac_url: str) -> bool:
+    """Verify our PAC is the active AutoConfigURL (PAC-only, no ProxyServer)."""
     import winreg
 
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
         try:
-            proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+            auto_config_url, _ = winreg.QueryValueEx(key, "AutoConfigURL")
         except FileNotFoundError:
             return False
-    return f"127.0.0.1:{port}" in str(proxy_server)
+        try:
+            proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+        except FileNotFoundError:
+            proxy_enable = 0
+    return str(auto_config_url) == pac_url and bool(proxy_enable)
 
 
 def _refresh_windows_proxy_settings() -> None:

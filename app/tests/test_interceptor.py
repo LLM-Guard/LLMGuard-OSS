@@ -11,6 +11,8 @@ Tests cover:
 from __future__ import annotations
 
 import os
+import sys
+import types
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -249,6 +251,128 @@ class TestBrowserProxyService:
 # -setwebproxy on macOS) in addition to the scoped PAC. Only the PAC-driven
 # AutoConfigURL / -setautoproxyurl path should be configured; non-AI traffic
 # must never be forced through mitmproxy.
+#
+# A fake winreg module is injected into sys.modules so these tests run on
+# any platform (winreg is Windows-only stdlib) without touching the real
+# Windows registry.
+
+
+def _install_fake_winreg(monkeypatch) -> dict:
+    """Install an in-memory fake `winreg` module and return its backing store.
+
+    The interceptor module does `import winreg` locally inside each
+    function, which just looks the name up in ``sys.modules`` - so injecting
+    a fake module there is enough to intercept every registry call, on
+    Windows or not.
+    """
+    store: dict = {}
+
+    class _FakeKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    def create_key_ex(root, path, reserved, access):
+        return _FakeKey()
+
+    def open_key(root, path, reserved, access):
+        return _FakeKey()
+
+    def set_value_ex(key, name, reserved, kind, value):
+        store[name] = {"value": value, "kind": kind}
+
+    def query_value_ex(key, name):
+        if name not in store:
+            raise FileNotFoundError(name)
+        entry = store[name]
+        return entry["value"], entry["kind"]
+
+    def delete_value(key, name):
+        if name not in store:
+            raise FileNotFoundError(name)
+        del store[name]
+
+    fake = types.ModuleType("winreg")
+    fake.HKEY_CURRENT_USER = "HKCU"
+    fake.KEY_SET_VALUE = 1
+    fake.KEY_READ = 2
+    fake.REG_SZ = 1
+    fake.REG_DWORD = 4
+    fake.CreateKeyEx = create_key_ex
+    fake.OpenKey = open_key
+    fake.SetValueEx = set_value_ex
+    fake.QueryValueEx = query_value_ex
+    fake.DeleteValue = delete_value
+
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    return store
+
+
+class TestWindowsSystemProxyPACOnly:
+    """Windows: enable/disable must be PAC-only (no blanket ProxyServer)."""
+
+    def _patch_platform(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("app.services.interceptor.is_windows", lambda: True)
+        monkeypatch.setattr("app.services.interceptor.is_macos", lambda: False)
+        monkeypatch.setattr(
+            "app.services.interceptor.WINDOWS_PROXY_BACKUP_PATH",
+            tmp_path / "windows_proxy_backup.json",
+        )
+        monkeypatch.setattr("app.services.interceptor.PAC_PATH", tmp_path / "proxy.pac")
+
+    def test_enable_sets_autoconfig_and_proxyenable_only(self, tmp_path, monkeypatch):
+        store = _install_fake_winreg(monkeypatch)
+        self._patch_platform(monkeypatch, tmp_path)
+
+        result = enable_system_proxy(port=8080)
+
+        assert result is True
+        assert store["AutoConfigURL"]["value"] == "http://127.0.0.1:9876/proxy.pac"
+        assert store["ProxyEnable"]["value"] == 1
+        # PAC-only: no blanket proxy values should ever be written.
+        assert "ProxyServer" not in store
+        assert "ProxyOverride" not in store
+
+    def test_enable_backs_up_and_disable_restores_existing_corporate_pac(
+        self, tmp_path, monkeypatch
+    ):
+        store = _install_fake_winreg(monkeypatch)
+        self._patch_platform(monkeypatch, tmp_path)
+
+        # Simulate a machine that already had a corporate PAC configured by IT.
+        store["AutoConfigURL"] = {
+            "value": "http://corp-proxy.example.com/corp.pac",
+            "kind": 1,
+        }
+        store["ProxyEnable"] = {"value": 1, "kind": 4}
+
+        enable_system_proxy(port=8080)
+        assert store["AutoConfigURL"]["value"] == "http://127.0.0.1:9876/proxy.pac"
+
+        result = disable_system_proxy()
+
+        assert result is True
+        assert store["AutoConfigURL"]["value"] == "http://corp-proxy.example.com/corp.pac"
+        assert store["ProxyEnable"]["value"] == 1
+        assert "ProxyServer" not in store
+
+    def test_disable_with_no_prior_settings_clears_autoconfigurl(
+        self, tmp_path, monkeypatch
+    ):
+        store = _install_fake_winreg(monkeypatch)
+        self._patch_platform(monkeypatch, tmp_path)
+
+        enable_system_proxy(port=8080)
+        disable_system_proxy()
+
+        # Backup recorded every value as previously-absent, so restore
+        # deletes them all rather than writing an explicit ProxyEnable=0 -
+        # an absent ProxyEnable is equivalent to "disabled" on Windows.
+        assert "AutoConfigURL" not in store
+        assert "ProxyEnable" not in store
+        assert "ProxyServer" not in store
 
 
 class TestMacOSSystemProxyPACOnly:
