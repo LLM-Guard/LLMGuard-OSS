@@ -24,7 +24,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.services.mitm_addon import (
+# The hardware-profile logic lives in the mitmproxy addon; skip this module when the
+# browser-proxy extra (mitmproxy) isn't installed — e.g. the core CI `test` job runs
+# `.[dev]` only. These tests run wherever `.[browser-proxy]`/`.[desktop]` is present.
+pytest.importorskip("mitmproxy")
+
+from app.services.mitm_addon import (  # noqa: E402  (import after importorskip guard)
     LLMGuardAddon,
     _detect_low_resource_hardware,
     _light_profile_stack,
