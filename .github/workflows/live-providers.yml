@@ -1,0 +1,62 @@
+name: Live providers (real API smoke)
+
+# Runs the gated live integration tests (tests/integration) against the REAL
+# OpenAI and Anthropic APIs to catch provider drift or redaction regressions.
+#
+# SECURITY (public repo):
+#   - Triggers are workflow_dispatch (maintainers only) and schedule (runs on
+#     the default branch = trusted code). NEVER pull_request / pull_request_target,
+#     so a fork PR can never reach these secrets. Fork PRs simply skip these
+#     tests (no keys -> pytest skipif).
+#   - The job is pinned to this repo (`if: github.repository == ...`) so forks
+#     that copy the workflow don't attempt (and fail) it.
+#   - Keys are spend-capped at the provider (OpenAI project budget + gpt-4o-mini
+#     only; Anthropic prepaid credits, no auto-reload), so blast radius is minimal.
+
+on:
+  workflow_dispatch:
+    inputs:
+      door:
+        description: "Which provider door(s) to test"
+        type: choice
+        default: both
+        options: [both, openai, anthropic]
+  schedule:
+    # Weekly, Monday 06:00 UTC. Cheap (sub-cent) drift check.
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: live-providers-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Live redaction smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Never run on forks (they have no secrets and shouldn't try).
+    if: github.repository == 'LLM-Guard/LLMGuard-OSS'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (core + dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run live provider tests
+        env:
+          LLMGUARD_LIVE_OPENAI_KEY: ${{ secrets.LLMGUARD_LIVE_OPENAI_KEY }}
+          LLMGUARD_LIVE_ANTHROPIC_KEY: ${{ secrets.LLMGUARD_LIVE_ANTHROPIC_KEY }}
+        run: |
+          door="${{ github.event.inputs.door }}"
+          if [ -n "$door" ] && [ "$door" != "both" ]; then
+            pytest tests/integration -v -k "$door"
+          else
+            pytest tests/integration -v
+          fi
