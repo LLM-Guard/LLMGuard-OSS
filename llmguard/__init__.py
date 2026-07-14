@@ -29,8 +29,14 @@ LiteLLM Integration:
 
 from __future__ import annotations
 
-from llmguard.callback import LLMGuardCallback
-from llmguard.sdk import RedactResult, ScanResult, is_safe, redact, scan
+import importlib
+from typing import TYPE_CHECKING, Any
+
+__version__ = "0.1.0"
+
+if TYPE_CHECKING:
+    from llmguard.callback import LLMGuardCallback
+    from llmguard.sdk import RedactResult, ScanResult, is_safe, redact, scan
 
 __all__ = [
     "scan",
@@ -39,4 +45,26 @@ __all__ = [
     "ScanResult",
     "RedactResult",
     "LLMGuardCallback",
+    "__version__",
 ]
+
+# The SDK (scan/redact/LLMGuardCallback) and its detokenization engine live in
+# ``llmguard.sdk`` / ``llmguard.callback``, which currently depend on the
+# separate ``app`` package. Import them lazily so the CLI wedge
+# (``llmguard.gateway`` / ``llmguard.cli``) and a bare ``import llmguard`` work
+# in a standalone install where ``app`` is not present.
+_LAZY_EXPORTS = {
+    "scan": "llmguard.sdk",
+    "redact": "llmguard.sdk",
+    "is_safe": "llmguard.sdk",
+    "ScanResult": "llmguard.sdk",
+    "RedactResult": "llmguard.sdk",
+    "LLMGuardCallback": "llmguard.callback",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY_EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(module), name)
