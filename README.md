@@ -1,8 +1,6 @@
 <p align="center">
-  <img src=".github/assets/logo.png" alt="Domestique" width="110" />
+  <img src=".github/assets/domestique-oss-logo.png" alt="Domestique — a local AI firewall for developers" width="420" />
 </p>
-
-<h1 align="center">Domestique</h1>
 
 <p align="center">
   <strong>A local AI firewall for developers.</strong>
