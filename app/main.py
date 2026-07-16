@@ -512,8 +512,10 @@ _MODEL_PULL_SIZES = {
 def _pull_notice(model: str) -> str:
     """One-line heads-up printed before `ollama pull` takes over the terminal."""
     size = _MODEL_PULL_SIZES.get(model, "a few GB")
+    marker, dash = ("▶", "—") if supports_unicode() else (">", "-")
     return (
-        f"▶ Pulling model {model} ({size}, one-time — progress below; may take several minutes)..."
+        f"{marker} Pulling model {model} "
+        f"({size}, one-time {dash} progress below; may take several minutes)..."
     )
 
 

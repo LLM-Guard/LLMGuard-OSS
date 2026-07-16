@@ -53,6 +53,18 @@ class TestPullNotice:
         assert "some-future-model:9b" in notice
         assert "a few GB" in notice
 
+    def test_ascii_fallback_is_cp1252_safe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reviewer finding: the ungated \u25b6 glyph raised UnicodeEncodeError on
+        cp1252 consoles when launch() was called without _configure_console_utf8."""
+        monkeypatch.setattr(app_main, "supports_unicode", lambda: False)
+        notice = app_main._pull_notice("qwen3:1.7b")
+        notice.encode("cp1252")  # must not raise
+        assert notice.startswith("> Pulling model")
+
+    def test_unicode_console_keeps_glyphs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(app_main, "supports_unicode", lambda: True)
+        assert app_main._pull_notice("qwen3:1.7b").startswith("\u25b6 Pulling model")
+
 
 class TestPortableStartupOrdering:
     def test_banner_prints_before_worker_threads(self, monkeypatch: pytest.MonkeyPatch) -> None:
