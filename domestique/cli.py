@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,7 @@ from domestique.models import Action
 
 if TYPE_CHECKING:
     from domestique.config import Settings
+    from domestique.detectors.registry import Finding
     from domestique.policy import PolicyEngine
 
 _DASHBOARD_URL = "http://127.0.0.1:9876"
@@ -250,6 +252,52 @@ def _render_config_header(settings: Settings, policy: PolicyEngine, *, color: bo
             "    Detection stack  " + "   ".join(stack_cells),
         ]
     )
+
+
+def _highlight_secrets(before: str, findings: list[Finding], paint: console.Palette) -> str:
+    """Paint each finding's leaked span red, non-overlapping, left to right."""
+    spans = sorted({(f.span.start, f.span.end) for f in findings if f.span is not None})
+    out: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        if start < cursor:  # skip overlaps
+            continue
+        out.append(before[cursor:start])
+        out.append(paint(before[start:end], "red"))
+        cursor = end
+    out.append(before[cursor:])
+    return "".join(out)
+
+
+def _highlight_tokens(after: str, paint: console.Palette) -> str:
+    return re.sub(
+        r"\[[A-Z0-9_]+_REDACTED\]",
+        lambda m: paint(m.group(0), "green"),
+        after,
+    )
+
+
+def _render_canned(before: str, after: str, findings: list[Finding], *, color: bool) -> str:
+    g = console.glyphs()
+    paint = console.Palette(enabled=color)
+    rule = "  " + g["rule"] * 60
+    lines = [
+        "",
+        "  " + paint("Domestique demo — watch it redact secrets", "bold"),
+        rule,
+        "  BEFORE",
+        "    " + _highlight_secrets(before, findings, paint),
+        "",
+        f"  AFTER {g['arrow']} sent to the model",
+        "    " + _highlight_tokens(after, paint),
+        rule,
+        "  Findings",
+    ]
+    for f in findings:
+        lines.append(
+            f"    {paint(g['check'], 'green')} {_label(f.category):<16} {f.confidence:.0%}"
+        )
+    return "\n".join(lines)
 
 
 def run_demo(*, interactive: bool | None = None) -> int:
