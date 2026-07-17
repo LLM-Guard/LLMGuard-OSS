@@ -382,15 +382,14 @@ def run_demo(*, interactive: bool | None = None) -> int:
     """
     from domestique.config_loader import settings_from_config
     from domestique.gateway import build_wedge_pipeline
-    from domestique.policy import PolicyEngine
 
     _route_logs_to_stderr()
     color = console.supports_color()
     settings = settings_from_config()
     pipeline = build_wedge_pipeline(settings)
-    policy = PolicyEngine.from_yaml_default()
-
-    print(_render_config_header(settings, policy, color=color))
+    # Reuse the pipeline's own policy for the header — loading it a second
+    # time via from_yaml_default() re-parsed the YAML and double-logged.
+    print(_render_config_header(settings, pipeline.policy, color=color))
 
     result = asyncio.run(pipeline.inspect(_DEMO_PROMPT))
     after = result.redacted_text or _DEMO_PROMPT
@@ -404,8 +403,8 @@ def run_demo(*, interactive: bool | None = None) -> int:
     if interactive:
         g = console.glyphs()
         print(
-            f"\n  Now try your own {g['arrow']} paste a prompt with (fake!) secrets, "
-            "Enter to finish."
+            f"\n  Now try your own {g['arrow']} paste anything with secrets — real or "
+            "fake, it never leaves your machine ;)  Enter on a blank line to finish."
         )
         while True:
             try:

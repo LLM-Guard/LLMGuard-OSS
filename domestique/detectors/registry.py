@@ -234,6 +234,11 @@ class DetectorPipeline:
         self._detectors = detectors
         self._policy = policy
 
+    @property
+    def policy(self) -> PolicyEngine:
+        """The policy engine this pipeline evaluates against."""
+        return self._policy
+
     async def inspect(self, text: str) -> InspectionResult:
         """Scan *text*, evaluate policy, and return a structured verdict."""
         if not text:
