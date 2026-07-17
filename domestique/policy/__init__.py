@@ -61,7 +61,7 @@ class PolicyEngine:
     @classmethod
     def from_yaml_default(cls) -> PolicyEngine:
         """Load the packaged redact-first wedge policy."""
-        return cls.from_yaml(Path(__file__).resolve().parent / "wedge_rules.yaml")
+        return cls.from_yaml(Path(__file__).resolve().parent / "cli-rules.yaml")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> PolicyEngine:

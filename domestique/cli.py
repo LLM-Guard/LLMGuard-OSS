@@ -381,12 +381,12 @@ def run_demo(*, interactive: bool | None = None) -> int:
     machine -> Settings() defaults, shown honestly.
     """
     from domestique.config_loader import settings_from_config
-    from domestique.gateway import build_wedge_pipeline
+    from domestique.gateway import build_cli_pipeline
 
     _route_logs_to_stderr()
     color = console.supports_color()
     settings = settings_from_config()
-    pipeline = build_wedge_pipeline(settings)
+    pipeline = build_cli_pipeline(settings)
     # Reuse the pipeline's own policy for the header — loading it a second
     # time via from_yaml_default() re-parsed the YAML and double-logged.
     print(_render_config_header(settings, pipeline.policy, color=color))

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from domestique.cli import _render_canned, _render_config_header, _render_ledger, _truncate
 from domestique.config import Settings
-from domestique.gateway import build_wedge_pipeline
+from domestique.gateway import build_cli_pipeline
 from domestique.policy import PolicyEngine
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ class TestConfigHeader:
 
 class TestCanned:
     def _run(self, text: str) -> InspectionResult:
-        return asyncio.run(build_wedge_pipeline().inspect(text))
+        return asyncio.run(build_cli_pipeline().inspect(text))
 
     def test_shows_before_after_and_findings(self) -> None:
         text = "my aws key AKIAIOSFODNN7EXAMPLE and email a@b.com"
@@ -51,7 +51,7 @@ class TestCanned:
 
 class TestLedger:
     def _findings(self, text: str) -> list[Finding]:
-        return asyncio.run(build_wedge_pipeline().inspect(text)).findings
+        return asyncio.run(build_cli_pipeline().inspect(text)).findings
 
     def test_pairs_leaked_value_to_token(self) -> None:
         text = "my aws key AKIAIOSFODNN7EXAMPLE and phone 555-123-4567"

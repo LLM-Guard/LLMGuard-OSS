@@ -30,7 +30,7 @@ def _det(
 @pytest.fixture
 def engine() -> PolicyEngine:
     """Engine with production-like rules."""
-    return PolicyEngine.from_yaml("src/domestique/policy/rules.yaml")
+    return PolicyEngine.from_yaml("src/domestique/policy/browser-rules.yaml")
 
 
 class TestPolicyEvaluation:
@@ -106,8 +106,8 @@ class TestDisplayPath:
         from domestique.policy import _display_path
 
         monkeypatch.chdir(tmp_path)
-        p = tmp_path / "domestique" / "policy" / "wedge_rules.yaml"
-        assert _display_path(p) == "domestique/policy/wedge_rules.yaml"
+        p = tmp_path / "domestique" / "policy" / "cli-rules.yaml"
+        assert _display_path(p) == "domestique/policy/cli-rules.yaml"
 
     def test_path_outside_cwd_stays_absolute(self, tmp_path, monkeypatch):
         from domestique.policy import _display_path
@@ -121,7 +121,7 @@ class TestDisplayPath:
 
 class TestPolicyActionsAccessor:
     def test_wedge_policy_exposes_redact_and_block(self) -> None:
-        engine = PolicyEngine.from_yaml(Path("domestique/policy/wedge_rules.yaml"))
+        engine = PolicyEngine.from_yaml(Path("domestique/policy/cli-rules.yaml"))
         assert Action.REDACT in engine.actions
         assert Action.BLOCK in engine.actions
 
