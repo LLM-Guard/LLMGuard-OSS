@@ -344,14 +344,19 @@ def _render_ledger(before: str, findings: list[Finding], *, color: bool) -> str:
     return "\n".join(out)
 
 
-def _route_logs_to_stderr() -> None:
-    """Keep process logs (structlog) off stdout, colored only to match stderr.
+def _quiet_logs_for_demo() -> None:
+    """Silence info-level process logs so the demo output stays clean.
 
     Domestique never calls ``structlog.configure()`` elsewhere, so structlog's
     unconfigured default — a ``ConsoleRenderer`` that always emits ANSI color
     to stdout, tty or not — is what fires when the policy/pipeline loaders
-    log (e.g. ``policy_loaded``). Left alone, that would interleave colored
-    log lines into the rendered demo output on every run, TTY or not.
+    log (e.g. ``policy_loaded``). Left alone, that padded dev-format line
+    ("[info     ] policy_loaded            path=...") interleaves into the
+    rendered demo on every run. This is called only by ``run_demo``, so
+    raising the threshold to WARNING affects the demo command and nothing
+    else: the config header already reports the policy + rule count, so the
+    info line is pure noise here, while real warnings (e.g. ``gliner_not_cached``)
+    still surface.
 
     The factory below resolves ``sys.stderr`` at each call instead of once
     here (``structlog.PrintLoggerFactory(file=sys.stderr)`` would capture it
@@ -359,6 +364,8 @@ def _route_logs_to_stderr() -> None:
     other stream is bound at configure time, which would go stale across a
     stream swap (e.g. pytest's per-test capsys/capfd redirection).
     """
+    import logging
+
     import structlog
 
     def _stderr_logger_factory(*_args: object) -> structlog.PrintLogger:
@@ -369,6 +376,7 @@ def _route_logs_to_stderr() -> None:
             *structlog.get_config()["processors"][:-1],
             structlog.dev.ConsoleRenderer(colors=console.supports_color(sys.stderr)),
         ],
+        wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING),
         logger_factory=_stderr_logger_factory,
     )
 
@@ -383,7 +391,7 @@ def run_demo(*, interactive: bool | None = None) -> int:
     from domestique.config_loader import settings_from_config
     from domestique.gateway import build_cli_pipeline
 
-    _route_logs_to_stderr()
+    _quiet_logs_for_demo()
     color = console.supports_color()
     settings = settings_from_config()
     pipeline = build_cli_pipeline(settings)
