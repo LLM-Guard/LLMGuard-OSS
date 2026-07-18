@@ -108,7 +108,7 @@ ignore = ["ANN401", "S101"]
 # annotations on every test method adds noise without type-safety value. (Core
 # `ruff check domestique` doesn't lint tests at all; this keeps `ruff check app`
 # consistent with that.)
-"app/tests/**" = ["ANN"]
+"domestique_app/tests/**" = ["ANN"]
 
 [tool.mypy]
 python_version = "3.11"
