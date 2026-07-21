@@ -15,6 +15,7 @@ Entry points:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import platform
@@ -437,13 +438,34 @@ def run(
     return r.returncode
 
 
+def _editable_install_argv(spec: str) -> list[str]:
+    """Choose an editable-install command that works in THIS interpreter.
+
+    A uv-created ``.venv`` ships without ``pip`` -- ``python -m pip`` then dies
+    with "No module named pip", which is exactly what a developer running
+    ``domestique setup`` from a uv-managed source checkout hits. Prefer pip when
+    it is importable here; otherwise fall back to ``uv pip`` targeting this
+    interpreter; otherwise fail with an actionable message rather than a raw
+    traceback.
+    """
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install", "-e", spec]
+    if shutil.which("uv") is not None:
+        return ["uv", "pip", "install", "--python", sys.executable, "-e", spec]
+    raise SystemExit(
+        "cannot install extras: this environment has neither pip nor uv.\n"
+        "  Add pip with:  python -m ensurepip --upgrade\n"
+        "  or install uv: https://docs.astral.sh/uv/  then re-run `domestique setup`."
+    )
+
+
 def install_extras(extras: list[str]) -> None:
     """Install extras editable from the source checkout (installer-script path)."""
     if not extras:
         return
     spec = f".[{','.join(extras)}]"
-    _print(f"\n▶ installing pip extras: {spec}")
-    run([sys.executable, "-m", "pip", "install", "-e", spec])
+    _print(f"\n▶ installing extras (editable): {spec}")
+    run(_editable_install_argv(spec))
 
 
 def wizard_install_extras(extras: list[str]) -> None:
@@ -1052,9 +1074,18 @@ def _wizard_walkthrough(hw: HardwareProfile, *, yes: bool) -> WizardChoices:
     _print("  Always on: compiled patterns for API keys, tokens, SSNs and more.")
     _print("  Zero download, ~0.03 ms per prompt. Nothing to decide here.")
 
+    # Tier 2 is on by default -- lowest-friction setup enables PII detection
+    # without a prompt. Still hardware-gated: on a <8 GB machine the 300 MB
+    # model loads slowly, so we skip it rather than force a heavy download.
     section("Tier 2 - GLiNER PII detection (~300 MB) [ner]")
     _print(f"  {_gliner_why(hw)}")
-    gliner = _decide("  enable GLiNER PII detection?", default=hw.ram_gb >= 8, yes=yes)
+    gliner = hw.ram_gb >= 8
+    if gliner:
+        _print("  -> enabled by default. Remove later with `pip uninstall gliner`")
+        _print("     and clear detection_stack.gliner_pii in the dashboard.")
+    else:
+        _print("  -> skipped: under 8 GB RAM. Enable later by installing the 'ner'")
+        _print("     extra and setting detection_stack.gliner_pii=true.")
 
     section("Tier 3 - local LLM classifier (via Ollama)")
     _print(f"  {_tier3_why(hw, recommended)}")
@@ -1063,7 +1094,10 @@ def _wizard_walkthrough(hw: HardwareProfile, *, yes: bool) -> WizardChoices:
         _print(f"  -> using recommended preset: {recommended} ({model}) (auto)")
         preset: str | None = recommended
     else:
-        options = [(k, LLM_PRESETS[k]["model"]) for k in LLM_PRESETS]
+        options = [
+            (k, f"{LLM_PRESETS[k]['model']}  (~{LLM_PRESETS[k]['size_gb']:g} GB download)")
+            for k in LLM_PRESETS
+        ]
         options.append(("none", "skip Tier 3 (regex/GLiNER only)"))
         choice = prompt_choice("\n  pick a Tier-3 model:", options, default=recommended)
         preset = None if choice == "none" else choice
