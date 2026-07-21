@@ -1,7 +1,7 @@
 """Domestique OSS CLI - the developer wedge entry point.
 
 Commands:
-    domestique start [--host H] [--port P] [--no-setup] [--quiet] [--strict]
+    domestique start [--host H] [--port P] [--no-setup] [--quiet] [--strict] [--access-log]
                                              launch the :8000 redacting proxy
     domestique demo                          show a before/after redaction, no key needed
     domestique report [--json] [--days N]    summarize redactions & blocks by type
@@ -175,7 +175,13 @@ def _render_detector_warnings(missing: list[TierStatus], *, color: bool) -> str:
 
 
 def _cmd_start(
-    host: str, port: int, *, no_setup: bool = False, quiet: bool = False, strict: bool = False
+    host: str,
+    port: int,
+    *,
+    no_setup: bool = False,
+    quiet: bool = False,
+    strict: bool = False,
+    access_log: bool = False,
 ) -> int:
     import uvicorn
 
@@ -220,7 +226,17 @@ def _cmd_start(
     pipeline = build_cli_pipeline(settings)
     print(_banner(host, port, policy=_policy_summary(pipeline.policy)))
     gateway = create_gateway(settings, pipeline=pipeline, on_decision=on_decision)
-    uvicorn.run(gateway, host=host, port=port)
+    # One voice: silence uvicorn's per-request access log + INFO startup chatter
+    # so it never speaks over the ticker. The ticker (redact/block only) is the
+    # single per-request signal; a clean request stays silent. --access-log
+    # restores uvicorn's raw HTTP logs for debugging.
+    uvicorn.run(
+        gateway,
+        host=host,
+        port=port,
+        access_log=access_log,
+        log_level="info" if access_log else "warning",
+    )
     return 0
 
 
@@ -549,6 +565,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="refuse to start if a configured detection tier is unavailable (fail-closed)",
     )
+    start.add_argument(
+        "--access-log",
+        action="store_true",
+        help="restore uvicorn's raw HTTP access log (off by default; the ticker is the voice)",
+    )
 
     sub.add_parser("demo", help="show a before/after redaction (no API key needed)")
 
@@ -582,6 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             no_setup=args.no_setup,
             quiet=args.quiet,
             strict=args.strict,
+            access_log=args.access_log,
         )
     if args.cmd == "demo":
         return run_demo()

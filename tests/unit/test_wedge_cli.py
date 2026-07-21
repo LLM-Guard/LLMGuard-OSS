@@ -28,12 +28,17 @@ def test_start_is_wired(monkeypatch, capsys):
     def fake_run(app, host, port, **kw):
         calls["host"] = host
         calls["port"] = port
+        calls["kw"] = kw
 
     monkeypatch.setattr("uvicorn.run", fake_run)
     rc = main(["start", "--port", "8111"])
     assert rc == 0
     assert calls["host"] == "127.0.0.1"
     assert calls["port"] == 8111
+    # one voice by default: uvicorn's own access log is silenced so it doesn't
+    # speak over the ticker (the ticker is the single per-request signal).
+    assert calls["kw"].get("access_log") is False
+    assert calls["kw"].get("log_level") == "warning"
 
     # the start banner is printed before the server launches
     out = capsys.readouterr().out
@@ -45,6 +50,19 @@ def test_start_is_wired(monkeypatch, capsys):
     # `policy_loaded` structlog line the user asked to have surfaced here).
     assert "Policy" in out
     assert "cli-rules.yaml" in out
+
+
+def test_start_access_log_flag_restores_uvicorn_logs(monkeypatch):
+    calls = {}
+
+    def fake_run(app, host, port, **kw):
+        calls["kw"] = kw
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+    rc = main(["start", "--port", "8112", "--access-log"])
+    assert rc == 0
+    assert calls["kw"].get("access_log") is True
+    assert calls["kw"].get("log_level") == "info"
 
 
 def test_banner_has_ascii_fallback(monkeypatch):

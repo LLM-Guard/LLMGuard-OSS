@@ -123,6 +123,7 @@ gap is fixed (fail-closed).
 | `--port` | `8000` | Port to listen on. |
 | `--quiet` | off | Suppress the live redaction ticker (also auto-suppressed when stdout isn't a TTY). |
 | `--strict` | off | Fail **closed** — refuse to start if a configured detection tier is unavailable. Default is fail-loud-but-open: warn and run. |
+| `--access-log` | off | Restore uvicorn's raw per-request HTTP access log. Off by default so the live ticker is the single per-request voice (a clean request stays silent). |
 | `--no-setup` | off | Skip the first-run setup offer. |
 
 `report` accepts `--json` (machine-readable) and `--days N` (only count the last N days).
