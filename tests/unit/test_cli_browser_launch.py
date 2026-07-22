@@ -167,3 +167,29 @@ class TestAppLifecycle:
         monkeypatch.setattr(cli, "_spawn_dashboard_app", lambda: None)
         monkeypatch.setattr(cli, "_wait_for_dashboard", lambda url, timeout=30.0: False)
         assert cli._ensure_app_running("http://x") is False
+
+
+class TestTurnOnAndCert:
+    def test_post_browser_start_hits_endpoint(self, stub_dashboard):
+        url, requests, _resp = stub_dashboard
+        assert cli._post_browser_start(url) == {"ok": True}
+        assert ("POST", "/api/browser-proxy/start") in requests
+
+    def test_cert_warning_when_untrusted(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            cli, "_dashboard_call", lambda url, path, **k: {"generated": True, "trusted": False}
+        )
+        cli._warn_if_cert_untrusted("http://x")
+        assert "isn't trusted yet" in capsys.readouterr().out
+
+    def test_cert_no_warning_when_trusted(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            cli, "_dashboard_call", lambda url, path, **k: {"generated": True, "trusted": True}
+        )
+        cli._warn_if_cert_untrusted("http://x")
+        assert capsys.readouterr().out == ""
+
+    def test_cert_no_warning_when_status_unavailable(self, monkeypatch, capsys):
+        monkeypatch.setattr(cli, "_dashboard_call", lambda url, path, **k: None)
+        cli._warn_if_cert_untrusted("http://x")
+        assert capsys.readouterr().out == ""

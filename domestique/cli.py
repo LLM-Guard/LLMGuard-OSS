@@ -456,6 +456,23 @@ def _ensure_app_running(url: str, *, timeout: float = 30.0) -> bool:
     return _wait_for_dashboard(url, timeout=timeout)
 
 
+def _post_browser_start(url: str) -> dict[str, Any] | None:
+    """Turn on browser interception via the dashboard (also enables the system
+    proxy server-side). Returns the dashboard's JSON response, or None."""
+    return _dashboard_call(url, "/api/browser-proxy/start", method="POST")
+
+
+def _warn_if_cert_untrusted(url: str) -> None:
+    """On platforms where the CA wasn't auto-trusted, point the user at the
+    dashboard to finish trusting it. Silent when trusted or status is unknown."""
+    status = _dashboard_call(url, "/api/cert-status")
+    if status is None:
+        return
+    if status.get("generated") and not status.get("trusted", True):
+        print("note: the Domestique certificate isn't trusted yet on this system.")
+        print(f"  finish trusting it in the dashboard: {url}")
+
+
 def _render_config_header(settings: Settings, policy: PolicyEngine, *, color: bool) -> str:
     g = console.glyphs()
     paint = console.Palette(enabled=color)
