@@ -6,11 +6,57 @@ side-effecting calls (install, spawn, open-browser) are mocked.
 
 from __future__ import annotations
 
+import json
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
 import domestique.cli as cli
+
+
+@pytest.fixture()
+def stub_dashboard():
+    """In-process dashboard-API stub; records (method, path) of every request."""
+    requests: list[tuple[str, str]] = []
+    responses = {
+        ("GET", "/api/browser-proxy"): (
+            200,
+            {"running": True, "setup_complete": True, "intercepted_domains": ["x.ai"]},
+        ),
+        ("POST", "/api/browser-proxy/start"): (200, {"ok": True}),
+        ("POST", "/api/browser-proxy/stop"): (200, {"ok": True}),
+        ("GET", "/api/cert-status"): (200, {"generated": True, "trusted": True, "path": "/x"}),
+    }
+
+    class Handler(BaseHTTPRequestHandler):
+        def _respond(self, method: str) -> None:
+            requests.append((method, self.path))
+            status, body = responses.get((method, self.path), (404, {"error": "not found"}))
+            payload = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self):
+            self._respond("GET")
+
+        def do_POST(self):
+            self._respond("POST")
+
+        def log_message(self, *a):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    yield url, requests, responses
+    server.shutdown()
+    server.server_close()
 
 
 class TestDetectInstallContext:
@@ -58,3 +104,32 @@ class TestEnsureBrowserDependency:
         )
         assert cli._ensure_browser_dependency(assume_yes=True, no_install=False) is False
         assert "pipx inject domestique" in capsys.readouterr().out
+
+
+class TestDashboardHelpers:
+    def test_call_returns_json(self, stub_dashboard):
+        url, _requests, _resp = stub_dashboard
+        assert cli._dashboard_call(url, "/api/browser-proxy") == {
+            "running": True,
+            "setup_complete": True,
+            "intercepted_domains": ["x.ai"],
+        }
+
+    def test_call_returns_none_when_unreachable(self):
+        # Nothing is listening on this port.
+        assert cli._dashboard_call("http://127.0.0.1:9", "/api/browser-proxy", timeout=0.2) is None
+
+    def test_reachable_true_against_stub(self, stub_dashboard):
+        url, _requests, _resp = stub_dashboard
+        assert cli._dashboard_reachable(url) is True
+
+    def test_reachable_false_when_down(self):
+        assert cli._dashboard_reachable("http://127.0.0.1:9") is False
+
+    def test_wait_returns_true_immediately_when_reachable(self, monkeypatch):
+        monkeypatch.setattr(cli, "_dashboard_reachable", lambda url: True)
+        assert cli._wait_for_dashboard("http://x", timeout=1.0) is True
+
+    def test_wait_times_out_when_never_ready(self, monkeypatch):
+        monkeypatch.setattr(cli, "_dashboard_reachable", lambda url: False)
+        assert cli._wait_for_dashboard("http://x", timeout=0.2, interval=0.05) is False

@@ -21,7 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from domestique import __version__, console
 from domestique.branding import LOGO, supports_unicode
@@ -392,6 +392,49 @@ def _ensure_browser_dependency(*, assume_yes: bool, no_install: bool) -> bool:
         _print_mitmproxy_hint()
         return False
     return True
+
+
+def _dashboard_call(
+    url: str, path: str, *, method: str = "GET", timeout: float = 5.0
+) -> dict[str, Any] | None:
+    """Call a dashboard JSON endpoint. Returns the parsed body (including a
+    4xx/5xx JSON error body), or None if unreachable / non-JSON."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(  # noqa: S310  # local dashboard, http only
+        url.rstrip("/") + path,
+        method=method,
+        data=b"" if method == "POST" else None,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return cast("dict[str, Any]", json.loads(resp.read().decode("utf-8")))
+    except urllib.error.HTTPError as exc:
+        try:
+            return cast("dict[str, Any]", json.loads(exc.read().decode("utf-8")))
+        except (json.JSONDecodeError, OSError):
+            return None
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _dashboard_reachable(url: str) -> bool:
+    """True if the dashboard HTTP server answers. Uses the cheap browser-proxy
+    status endpoint (no interception-chain verification)."""
+    return _dashboard_call(url, "/api/browser-proxy", timeout=3.0) is not None
+
+
+def _wait_for_dashboard(url: str, *, timeout: float = 30.0, interval: float = 0.5) -> bool:
+    """Poll until the dashboard is reachable or the timeout elapses."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _dashboard_reachable(url):
+            return True
+        time.sleep(interval)
+    return False
 
 
 def _render_config_header(settings: Settings, policy: PolicyEngine, *, color: bool) -> str:
