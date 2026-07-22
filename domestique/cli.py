@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import webbrowser
 from typing import TYPE_CHECKING, Any, cast
 
 from domestique import __version__, console
@@ -471,6 +472,45 @@ def _warn_if_cert_untrusted(url: str) -> None:
     if status.get("generated") and not status.get("trusted", True):
         print("note: the Domestique certificate isn't trusted yet on this system.")
         print(f"  finish trusting it in the dashboard: {url}")
+
+
+def _cmd_browser_launch(
+    url: str, *, assume_yes: bool, no_install: bool, open_dashboard: bool
+) -> int:
+    """Bare `domestique browser`: one idempotent step to full browser protection.
+
+    Ensure mitmproxy -> ensure the dashboard app is up (cert trusted during its
+    portable launch) -> turn interception on (enables the system proxy
+    server-side) -> open the dashboard. Re-running when already protected just
+    re-opens the dashboard.
+    """
+    if not _ensure_browser_dependency(assume_yes=assume_yes, no_install=no_install):
+        return 1
+
+    if not _ensure_app_running(url):
+        print("error: the dashboard app didn't come up in time.")
+        print("  check logs under ~/.domestique/, then retry, or run it directly:")
+        print("    python -m domestique_app --mode portable")
+        return 1
+
+    payload = _post_browser_start(url)
+    if payload is None or payload.get("error"):
+        detail = payload.get("error") if payload else "no response from the dashboard"
+        print(f"error: could not turn on browser protection - {detail}")
+        return 1
+
+    _warn_if_cert_untrusted(url)
+
+    if open_dashboard:
+        webbrowser.open(url)
+
+    if payload.get("already_running"):
+        print("Browser protection is already on. Dashboard:")
+    else:
+        print("Your browser is now protected. Try a chatbot and watch the dashboard:")
+    print(f"  {url}")
+    print("  To stop:  domestique browser off")
+    return 0
 
 
 def _render_config_header(settings: Settings, policy: PolicyEngine, *, color: bool) -> str:

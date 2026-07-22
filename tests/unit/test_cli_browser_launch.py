@@ -193,3 +193,72 @@ class TestTurnOnAndCert:
         monkeypatch.setattr(cli, "_dashboard_call", lambda url, path, **k: None)
         cli._warn_if_cert_untrusted("http://x")
         assert capsys.readouterr().out == ""
+
+
+class TestOrchestrator:
+    def _all_ok(self, monkeypatch, opened):
+        monkeypatch.setattr(cli, "_ensure_browser_dependency", lambda **k: True)
+        monkeypatch.setattr(cli, "_ensure_app_running", lambda url, **k: True)
+        monkeypatch.setattr(cli, "_post_browser_start", lambda url: {"ok": True})
+        monkeypatch.setattr(cli, "_warn_if_cert_untrusted", lambda url: None)
+        monkeypatch.setattr(cli.webbrowser, "open", lambda u: opened.append(u))
+
+    def test_happy_path_opens_dashboard_returns_0(self, monkeypatch, capsys):
+        opened = []
+        self._all_ok(monkeypatch, opened)
+        rc = cli._cmd_browser_launch(
+            "http://x", assume_yes=True, no_install=False, open_dashboard=True
+        )
+        assert rc == 0
+        assert opened == ["http://x"]
+        assert "protected" in capsys.readouterr().out.lower()
+
+    def test_no_open_skips_browser(self, monkeypatch):
+        opened = []
+        self._all_ok(monkeypatch, opened)
+        rc = cli._cmd_browser_launch(
+            "http://x", assume_yes=True, no_install=False, open_dashboard=False
+        )
+        assert rc == 0
+        assert opened == []
+
+    def test_dependency_missing_returns_1_before_anything(self, monkeypatch):
+        monkeypatch.setattr(cli, "_ensure_browser_dependency", lambda **k: False)
+        spawned = []
+        monkeypatch.setattr(cli, "_ensure_app_running", lambda url, **k: spawned.append(1) or True)
+        rc = cli._cmd_browser_launch(
+            "http://x", assume_yes=True, no_install=True, open_dashboard=True
+        )
+        assert rc == 1
+        assert spawned == []
+
+    def test_app_never_up_returns_1(self, monkeypatch, capsys):
+        monkeypatch.setattr(cli, "_ensure_browser_dependency", lambda **k: True)
+        monkeypatch.setattr(cli, "_ensure_app_running", lambda url, **k: False)
+        rc = cli._cmd_browser_launch(
+            "http://x", assume_yes=True, no_install=False, open_dashboard=True
+        )
+        assert rc == 1
+        assert "didn't come up" in capsys.readouterr().out
+
+    def test_turn_on_error_surfaces_detail_returns_1(self, monkeypatch, capsys):
+        monkeypatch.setattr(cli, "_ensure_browser_dependency", lambda **k: True)
+        monkeypatch.setattr(cli, "_ensure_app_running", lambda url, **k: True)
+        monkeypatch.setattr(cli, "_post_browser_start", lambda url: {"error": "port in use"})
+        rc = cli._cmd_browser_launch(
+            "http://x", assume_yes=True, no_install=False, open_dashboard=True
+        )
+        assert rc == 1
+        assert "port in use" in capsys.readouterr().out
+
+    def test_already_on_reports_already_protected(self, monkeypatch, capsys):
+        opened = []
+        self._all_ok(monkeypatch, opened)
+        monkeypatch.setattr(
+            cli, "_post_browser_start", lambda url: {"ok": True, "already_running": True}
+        )
+        rc = cli._cmd_browser_launch(
+            "http://x", assume_yes=True, no_install=False, open_dashboard=True
+        )
+        assert rc == 0
+        assert "already" in capsys.readouterr().out.lower()
