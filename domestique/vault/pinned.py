@@ -181,8 +181,20 @@ class PinnedVault:
         Serializing a snapshot of ``self._entries`` requires no concurrent
         mutation, which the lock guarantees. A per-write unique temp file
         (rather than a fixed ``vault.tmp``) means two writers — even in
-        separate processes/instances sharing the path — never rename each
-        other's temp out from under the pending ``os.replace``.
+        separate processes/instances sharing the path — never corrupt each
+        other's write by renaming a shared temp out from under the pending
+        ``os.replace``.
+
+        That's the only cross-process guarantee this makes. ``self._entries``
+        is an in-memory snapshot taken at ``load()`` time and never re-read
+        from disk before a write, so two ``PinnedVault`` instances (e.g. two
+        processes) pinning different values concurrently can still silently
+        lose one writer's pin -- the later ``os.replace`` overwrites the file
+        wholesale rather than merging. Closing this needs either a read-
+        merge-write or an OS-level file lock around the read-modify-write
+        sequence; not attempted here because today's only caller (``cli.py``)
+        is single-process. Multi-process use of the same vault path is not
+        currently supported.
         """
         if self._key is None:
             return

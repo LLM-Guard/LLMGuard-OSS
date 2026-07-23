@@ -89,6 +89,13 @@ def render_token(prefix: str, index: int) -> str:
     ``category_prefix`` already bounds the prefix for normal indices; this
     is the belt-and-suspenders clamp that upholds the invariant even for a
     pathologically large index (more digits than ``_INDEX_DIGITS`` reserved).
+
+    The clamp itself assumes ``len(str(index)) <= MAX_TOKEN_LEN - 3`` (i.e.
+    the index alone still fits once the prefix is truncated to empty); past
+    that point (~10**29 tokens of one category) the returned token could
+    exceed ``MAX_TOKEN_LEN``, silently breaking the streaming holdback bound.
+    Not reachable by any real session -- noted so ``max(budget, 0)`` isn't
+    mistaken for an airtight bound.
     """
     idx = str(index)
     budget = MAX_TOKEN_LEN - 3 - len(idx)

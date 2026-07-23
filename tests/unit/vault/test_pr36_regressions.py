@@ -288,3 +288,74 @@ class TestPinAfterMintNoCollision:
 
     def test_pin_is_noop_without_vault(self) -> None:
         assert _service().pin("x", "us_ssn") == ""
+
+    def test_pin_and_racing_tokenize_never_collide_on_index(
+        self, tmp_path: Path, monkeypatch: object
+    ) -> None:
+        """Regression: TokenService.pin()'s floor-compute-then-reserve used to
+        be two separate lock acquisitions (its own read, then PinnedVault's
+        internal one) with a gap in between. A tokenize() for the same
+        category landing in that gap could mint a session token at the exact
+        index pin() was about to claim -- since detokenize_text resolves
+        session-first, the pinned value would become unreachable, silently
+        defeating the pin.
+
+        Real thread scheduling almost never lands in that few-bytecode gap,
+        so this forces the exact interleaving deterministically: pin() is
+        paused right after entering PinnedVault.pin() (i.e. after its floor
+        was already computed), a concurrent tokenize() for the same category
+        is given a chance to run, and only then is pin() allowed to finish
+        reserving. Under the fix, tokenize() shares TokenService._lock with
+        pin() and cannot run until pin() fully releases it, so it always
+        lands *after* the reservation, not inside its gap.
+        """
+        svc = _vault_service(tmp_path)
+        assert svc.pinned is not None
+        entered_pinned_pin = threading.Event()
+        tokenize_attempted = threading.Event()
+        original_pinned_pin = svc.pinned.pin
+
+        def instrumented_pinned_pin(value: str, category: str, min_index: int = 1) -> str:
+            entered_pinned_pin.set()
+            # Under the bug this window is where a racing tokenize() mints
+            # into the floor pin() is about to claim; under the fix,
+            # tokenize() is blocked on TokenService._lock and can't even
+            # start until this call (and pin()'s whole critical section)
+            # returns, so this wait always times out harmlessly.
+            tokenize_attempted.wait(timeout=0.2)
+            return original_pinned_pin(value, category, min_index=min_index)
+
+        monkeypatch.setattr(svc.pinned, "pin", instrumented_pinned_pin)
+
+        result: dict[str, str] = {}
+
+        def run_pin() -> None:
+            result["pin_token"] = svc.pin("pinned-val", "us_ssn")
+
+        def run_tokenize() -> None:
+            entered_pinned_pin.wait(timeout=1.0)
+            result["session_token"] = svc.tokenize("session-val", "us_ssn")
+            tokenize_attempted.set()
+
+        t_pin = threading.Thread(target=run_pin)
+        t_tok = threading.Thread(target=run_tokenize)
+        t_pin.start()
+        t_tok.start()
+        t_pin.join(timeout=2.0)
+        t_tok.join(timeout=2.0)
+
+        assert not t_pin.is_alive() and not t_tok.is_alive(), "test threads did not finish"
+        assert result["pin_token"] and result["session_token"]
+        assert result["pin_token"] != result["session_token"], (
+            "pin() and a racing tokenize() minted the same token for two different values"
+        )
+        # The concrete symptom a collision produces: each token must still
+        # reverse to the value it was actually minted for.
+        pinned_restored, _ = svc.detokenize_text(
+            result["pin_token"], allowed={result["pin_token"]}
+        )
+        assert pinned_restored == "pinned-val"
+        session_restored, _ = svc.detokenize_text(
+            result["session_token"], allowed={result["session_token"]}
+        )
+        assert session_restored == "session-val"

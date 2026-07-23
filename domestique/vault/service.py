@@ -54,7 +54,14 @@ class TokenService:
             pinned_token = self.pinned.lookup_value(value)
             if pinned_token:
                 return pinned_token
-        return self.session.tokenize(value, category)
+        # Shares self._lock with pin()'s floor-compute-and-reserve section: a
+        # session mint racing a concurrent pin (same category, different
+        # thread) must not land on the index pin() is about to claim, or
+        # detokenize_text's session-first resolution would return the wrong
+        # value for one of them. See pin()'s docstring for the failure this
+        # closes.
+        with self._lock:
+            return self.session.tokenize(value, category)
 
     def pin(self, value: str, category: str) -> str:
         """Promote *value* into the persistent pinned vault safely.
@@ -67,13 +74,21 @@ class TokenService:
         counter above the new pinned index so future session tokens stay
         clear. Use this rather than ``PinnedVault.pin`` directly whenever the
         vault shares a live ``SessionStore``. Returns '' if no pinned vault.
+
+        The floor-compute-then-reserve sequence below is not safe to split
+        across two lock acquisitions: a ``tokenize()`` call for the same
+        category between reading ``floor`` and committing it to
+        ``self.pinned`` could mint a session token at the very index this
+        pin is about to claim — self._lock (shared with tokenize()) makes
+        the whole sequence atomic against that race.
         """
         if self.pinned is None:
             return ""
-        floor = max(self.pinned.max_index(category), self.session.max_index(category)) + 1
-        token = self.pinned.pin(value, category, min_index=floor)
-        self.sync_counter_floors()
-        return token
+        with self._lock:
+            floor = max(self.pinned.max_index(category), self.session.max_index(category)) + 1
+            token = self.pinned.pin(value, category, min_index=floor)
+            self.sync_counter_floors()
+            return token
 
     def detokenize_text(
         self, text: str, allowed: AbstractSet[str] | None = None

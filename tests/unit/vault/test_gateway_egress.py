@@ -12,8 +12,10 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+import pytest
+
 from benchmarks.eval.mock_upstream import serve
-from domestique.gateway import create_gateway
+from domestique.gateway import build_cli_pipeline, create_gateway
 from domestique.vault.service import TokenService
 from domestique.vault.session import SessionStore
 
@@ -165,3 +167,36 @@ def test_cross_conversation_token_not_reversed(monkeypatch: Any) -> None:
     assert "111-11-1111" in a_content        # A's own secret restored
     assert "[SSN_1]" in a_content            # B's token left verbatim
     assert "444-44-4444" not in a_content    # B's secret never leaks into A
+
+
+class TestCreateGatewayTokenServiceWiring:
+    """A caller that passes a pre-built pipeline but forgets token_service=
+    used to leave app.state.token_service None: tokens still get minted on
+    the way out (the pipeline has its own), but responses were never
+    detokenized coming back -- fails safe (verbatim relay), but silently
+    breaks reversibility with no error. create_gateway must derive it from
+    the pipeline instead."""
+
+    def test_pipeline_only_derives_token_service_from_pipeline(self) -> None:
+        svc = TokenService(SessionStore(), None)
+        pipeline = build_cli_pipeline(token_service=svc)
+
+        app = create_gateway(pipeline=pipeline)
+
+        assert app.state.token_service is svc
+
+    def test_matching_pipeline_and_token_service_still_work(self) -> None:
+        svc = TokenService(SessionStore(), None)
+        pipeline = build_cli_pipeline(token_service=svc)
+
+        app = create_gateway(pipeline=pipeline, token_service=svc)
+
+        assert app.state.token_service is svc
+
+    def test_mismatched_pipeline_and_token_service_raises(self) -> None:
+        svc_a = TokenService(SessionStore(), None)
+        svc_b = TokenService(SessionStore(), None)
+        pipeline = build_cli_pipeline(token_service=svc_a)
+
+        with pytest.raises(ValueError, match="don't match"):
+            create_gateway(pipeline=pipeline, token_service=svc_b)

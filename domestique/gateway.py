@@ -465,12 +465,31 @@ def create_gateway(
     wired to one.
     """
     resolved = settings or Settings()
-    if token_service is None and pipeline is None:
-        from domestique.vault.service import TokenService as _TokenService
-        from domestique.vault.session import SessionStore
+    if pipeline is None:
+        if token_service is None:
+            from domestique.vault.service import TokenService as _TokenService
+            from domestique.vault.session import SessionStore
 
-        token_service = _TokenService(SessionStore(), None)
-    built_pipeline = pipeline or build_cli_pipeline(resolved, token_service=token_service)
+            token_service = _TokenService(SessionStore(), None)
+        built_pipeline = build_cli_pipeline(resolved, token_service=token_service)
+    else:
+        built_pipeline = pipeline
+        # getattr, not direct access: test doubles / future pipeline shapes may
+        # not have a _token_service at all, which should behave exactly like
+        # token_service=None (verbatim relay) rather than raising.
+        pipeline_token_service = getattr(built_pipeline, "_token_service", None)
+        if token_service is None:
+            # Derive it from the pipeline instead of leaving app.state.token_service
+            # None: otherwise tokens get minted going out but responses are never
+            # detokenized coming back (fails safe -- verbatim relay -- but silently
+            # breaks reversibility). Mirror image of the mistake build_cli_pipeline's
+            # caller in cli.py already guards against by passing token_service to both.
+            token_service = pipeline_token_service
+        elif token_service is not pipeline_token_service:
+            raise ValueError(
+                "create_gateway() received a pipeline and a token_service that "
+                "don't match -- pass the same TokenService to both, or only one."
+            )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
